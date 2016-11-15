@@ -2,10 +2,7 @@
 #include<stdlib.h>
 #include<string.h>
 #include<ctype.h>
-/**
-CS 4400 Matchlab
-Author: Qixiang Chao
-*/
+
 
 int is_a_model(char* sequence)
 {

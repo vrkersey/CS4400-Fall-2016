@@ -10,8 +10,8 @@
  * Please fill in the following student struct 
  */
 student_t student = {
-  "Qixiang Chao",     /* Full name */
-  "u0892629@utah.edu",  /* Email address */
+  "John Doe",     /* Full name */
+  "u0888888@utah.edu",  /* Email address */
 
 };
 
