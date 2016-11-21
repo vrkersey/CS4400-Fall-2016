@@ -13,6 +13,7 @@
 #include <assert.h>
 #include <unistd.h>
 #include <string.h>
+//#include <tclDecls.h>
 
 #include "mm.h"
 #include "memlib.h"
@@ -36,6 +37,7 @@
 //};block_footer;
 
 typedef struct list_node {
+
     struct list_node *prev;
     struct list_node *next;
 } list_node;
@@ -86,6 +88,8 @@ static void add_to_free_list(void *bp);
 
 static void remove_from_free_list(void *bp);
 
+static void *find_avail_recursion(size_t size, void *start_ptr);
+
 static void *find_avail(size_t size);
 
 /* 
@@ -98,6 +102,8 @@ int mm_init(void) {
     first_pp = current_page_pointer = first_bp;
     NEXT_PAGE(first_pp) = NULL;
     PREV_PAGE(first_pp) = NULL;
+    NEXT_PAGE(current_page_pointer) = NULL;
+    PREV_PAGE(current_page_pointer) = NULL;
 
     first_bp += OVERHEAD;
     PUT(HDPR(first_bp), PACK(2, 1));
@@ -144,8 +150,6 @@ void *mm_malloc(size_t size) {
 //    current_avail += newsize;
 //    current_avail_size -= newsize;
 
-    return p;
-
 }
 
 /*
@@ -164,23 +168,22 @@ void mm_free(void *ptr) {
             PREV_PAGE(NEXT_PAGE(current_page_pointer)) = PREV_PAGE(current_page_pointer);
             NEXT_PAGE(PREV_PAGE(current_page_pointer)) = NEXT_PAGE(current_page_pointer);
             void *temp_ptr = current_page_pointer;
-            mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT)); //Question !!!!!!!!!!!!!!!!!!
             current_page_pointer = NEXT_PAGE(current_page_pointer);
+            mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT)); //Question !!!!!!!!!!!!!!!!!!
 
         } else if (NEXT_PAGE(current_page_pointer) != NULL && PREV_PAGE(current_page_pointer) == NULL) {
             void *temp_ptr = current_page_pointer;
-            mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT));
             current_page_pointer = first_pp = NEXT_PAGE(current_page_pointer);
             first_bp = first_pp + (2 * OVERHEAD);
             PREV_PAGE(NEXT_PAGE(current_page_pointer)) = NULL;
+            mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT));
 
         } else if (NEXT_PAGE(current_page_pointer) == NULL && PREV_PAGE(current_page_pointer) != NULL) {
             void *temp_ptr = current_page_pointer;
-            mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT));
             current_page_pointer = PREV_PAGE(current_page_pointer);
             NEXT_PAGE(PREV_PAGE(current_page_pointer)) = NULL;
+            mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT));
         }
-
     }
     return;
 }
@@ -246,15 +249,19 @@ static void extend(size_t size) {
 }
 
 static void *find_avail(size_t size) {
-    //TODO
-    return NULL;
+    return find_avail_recursion(size, free_list_ptr);
+}
+
+static void *find_avail_recursion(size_t size, void *start_ptr) {
+    if (!start_ptr) return NULL;
+    if (GET_ALLOC(HDPR(free_list_ptr)) == 0 && size <= GET_SIZE(HDPR(start_ptr))) return start_ptr;
+    return find_avail_recursion(size, NEXT_NODE(start_ptr));
 }
 
 static void set_allocated(void *bp, size_t size) {
     size_t full_size = GET_SIZE(HDPR(bp));
     size_t extra_size = full_size - size;
-    if(extra_size > ALIGN(1 + OVERHEAD))
-    {
+    if (extra_size > ALIGN(1 + OVERHEAD)) {
         PUT(HDPR(bp), PACK(size, 1));
         PUT(FTRP(bp), PACK(size, 1));
         remove_from_free_list(bp);
@@ -262,7 +269,7 @@ static void set_allocated(void *bp, size_t size) {
         PUT(HDPR(bp), PACK(extra_size, 0));
         PUT(FTRP(bp), PACK(extra_size, 0));
         coalesce(bp);
-    } else{
+    } else {
         PUT(HDPR(bp), PACK(full_size, 1));
         PUT(FTRP(bp), PACK(full_size, 1));
         remove_from_free_list(bp);
