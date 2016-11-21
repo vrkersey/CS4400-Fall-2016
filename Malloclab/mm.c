@@ -46,14 +46,14 @@ typedef struct page_header {
     struct page_header *next;
 } page_header;
 
-typedef size_t block_header;
-typedef size_t foot_header;
+typedef size_t block_header; //Should be aligned to 16 bytes instead of keeping 8 bytes
+typedef size_t foot_header; //来个爸爸帮帮我!!!!
 
 #define GET(p) (*(size_t *)(p))
 #define PUT(p, val) (*(size_t *)(p) = (val))
 #define PACK(size, alloc) ((size) | (alloc))
 #define OVERHEAD (sizeof(block_header) + sizeof(foot_header))
-#define HDPR(bp) ((char *)(bp) - OVERHEAD) //Header pointer
+#define HDPR(bp) ((char *)(bp) - (OVERHEAD / 2)) //Header pointer
 #define GET_SIZE(p) (GET(p) & ~0xF)
 #define GET_ALLOC(p) (GET(p) & 0x1)
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(HDPR(bp)))//Next block pointer
