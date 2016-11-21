@@ -37,7 +37,6 @@
 //};block_footer;
 
 typedef struct list_node {
-
     struct list_node *prev;
     struct list_node *next;
 } list_node;
@@ -96,27 +95,56 @@ static void *find_avail(size_t size);
  * mm_init - initialize the malloc package.
  */
 int mm_init(void) {
+    //Initial page size
     size_t page_size = PAGE_ALIGN(mem_pagesize());
 
+    //The initial pointer, at the start of the page
     first_bp = mem_map(page_size);
+    //First page pointer and current page pointer is the same location with first payload pointer
     first_pp = current_page_pointer = first_bp;
+
+    //This is for page linking
+    PUT(first_bp, 0);
+
+    //First page pointer has NULL previous page and NULL next page
     NEXT_PAGE(first_pp) = NULL;
     PREV_PAGE(first_pp) = NULL;
+
+    //Current page pointer does not as well
     NEXT_PAGE(current_page_pointer) = NULL;
     PREV_PAGE(current_page_pointer) = NULL;
 
+    //Overhead equals 32
     first_bp += OVERHEAD;
+
+    //Setting up prologue header
     PUT(HDPR(first_bp), PACK(2, 1));
-    PUT(FTRP(first_bp), PACK(2, 0));
+    //Setting up prologue footer
+    PUT(FTRP(first_bp), PACK(2, 1));
+
+    //The first free list pointer
     free_list_ptr = first_bp;
+
+    //Since we have an empty block at start, a prologue header and a prologue footer and a terminator,
+    //Thus available size should be total size minus 4 * Alignment(16)
     current_avail_size = page_size - (4 * ALIGNMENT);
+
+    //Global variable, every page has the same available page size
     cons_avail_page_size = current_avail_size;
+
+    //This is the payload pointer for allocation
     void *bp = first_bp + OVERHEAD;
+
+    //Payload header has the size same with available size and allocated is 0
     PUT(HDPR(bp), PACK(current_avail_size, 0));
-    PUT(FTRP(bp), current_avail_size);
+    //Payload footer
+    PUT(FTRP(bp), PACK(current_avail_size, 0));
+
+    //Terminator
     PUT(HDPR(NEXT_BLKP(bp)), PACK(0, 1));
 
     current_avail = bp;
+  //  printf("hi");
 //    current_avail_size = 0;
 
     return 0;
@@ -129,6 +157,8 @@ int mm_init(void) {
 void *mm_malloc(size_t size) {
     if (size == 0) return NULL;
     int need_size = MAX(size, sizeof(list_node));
+
+    //Size should be aligned and add header and footer size
     int new_size = ALIGN(need_size + OVERHEAD);
     void *p;
     if ((p = find_avail(new_size)) != NULL) {
@@ -158,28 +188,57 @@ void *mm_malloc(size_t size) {
 void mm_free(void *ptr) {
     size_t size;
     if (ptr == NULL) return;
+
+    //Getting size of block via header
     size = GET_SIZE(HDPR(ptr));
+
+    //Setting unallocated
     PUT(HDPR(ptr), PACK(size, 0));
     PUT(FTRP(ptr), PACK(size, 0));
+
+    //Merge if needed
     coalesce(ptr);
+
+    //Double Linked List of pages
+    //If the page is all freed, the current page should be removed which is using "mem_unmap"
     if (GET_SIZE(HDPR(ptr)) == cons_avail_page_size) {
+        //Setting current page pointer
         current_page_pointer = ptr - (2 * OVERHEAD);
+
+        //Case 1: If the page that is needed to free has both previous page and next page
         if (NEXT_PAGE(current_page_pointer) != NULL && PREV_BLKP(current_page_pointer) != NULL) {
+
+            //current_page_pointer->next_page->prev_page = current_page_pointer->prev_page
             PREV_PAGE(NEXT_PAGE(current_page_pointer)) = PREV_PAGE(current_page_pointer);
+
+            //current_page_pointer->prev_page->next_page = current_page_pointer->next_page
             NEXT_PAGE(PREV_PAGE(current_page_pointer)) = NEXT_PAGE(current_page_pointer);
+
+            //Setting a temp pointer point to the same with the current_page_pointer
             void *temp_ptr = current_page_pointer;
+
+            //Current page pointer goes to next page
             current_page_pointer = NEXT_PAGE(current_page_pointer);
+
+            //un_map from temp ptr with length of available and 4 * alignment
             mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT)); //Question !!!!!!!!!!!!!!!!!!
 
+        //Case 2: If the page that is needed to free is the very top page
         } else if (NEXT_PAGE(current_page_pointer) != NULL && PREV_PAGE(current_page_pointer) == NULL) {
+
             void *temp_ptr = current_page_pointer;
+            //Setting current page pointer and first page pointer to the next page
             current_page_pointer = first_pp = NEXT_PAGE(current_page_pointer);
+            //Setting first payload pointer to the next page as well
             first_bp = first_pp + (2 * OVERHEAD);
             PREV_PAGE(NEXT_PAGE(current_page_pointer)) = NULL;
             mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT));
-
+        //Case 3: If the page is at the most bottom
         } else if (NEXT_PAGE(current_page_pointer) == NULL && PREV_PAGE(current_page_pointer) != NULL) {
+
             void *temp_ptr = current_page_pointer;
+
+            //Setting current page pointer goes to previous page
             current_page_pointer = PREV_PAGE(current_page_pointer);
             NEXT_PAGE(PREV_PAGE(current_page_pointer)) = NULL;
             mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT));
@@ -189,12 +248,13 @@ void mm_free(void *ptr) {
 }
 
 static void *coalesce(void *ptr) {
+    //Get size, next and previous allocated
     size_t next_alloc = GET_ALLOC(HDPR(NEXT_BLKP(ptr)));
     size_t prev_alloc = GET_ALLOC(HDPR(PREV_BLKP(ptr)));
     size_t size = GET_SIZE(HDPR(ptr));
 
     /**Case 1**/
-    if (prev_alloc && next_alloc) add_to_free_list(ptr);
+    if (prev_alloc && next_alloc) add_to_free_list(ptr); //Add this ptr to free list
 
         /**Case 2**/
     else if (prev_alloc && !next_alloc) {
@@ -249,7 +309,16 @@ static void extend(size_t size) {
 }
 
 static void *find_avail(size_t size) {
-    return find_avail_recursion(size, free_list_ptr);
+//    void *bp;
+//    for(bp = free_list_ptr; GET_ALLOC(HDPR(bp)) == 0; bp = NEXT_NODE(bp))
+//    {
+//        if(size <= GET_SIZE(HDPR(bp)))
+//        {
+//            return bp;
+//        }
+//
+//    }
+   return find_avail_recursion(size, free_list_ptr);
 }
 
 static void *find_avail_recursion(size_t size, void *start_ptr) {
@@ -292,5 +361,4 @@ static void remove_from_free_list(void *bp) {
     SET_PREV_PTR(NEXT_NODE(bp), PREV_NODE(bp));
 
 }
-
 
