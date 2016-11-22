@@ -67,6 +67,22 @@ typedef size_t foot_header; //来个爸爸帮帮我!!!!
 #define SET_NEXT_PTR(node, qp) (NEXT_NODE(node) = qp)
 #define SET_PREV_PTR(node, qp) (PREV_NODE(node) = qp)
 
+//#define GET_SIZE(p) (block_header *)(p)->size
+//#define GET_ALLOC(p) (block_header *)(p)->allocated
+//#define SET_SIZE(p, ns) (GET_SIZE(p) = ns)
+//#define SET_ALLOC(p, na) (GET_ALLOC(p) = na)
+
+
+
+//Question1: Footer and header alignment
+//Question2: Where should set the start of the free list pointer
+//Question3: mem_unmap pointer and page issue
+//Question4: Linking of double linked list
+//Question5: If statement in "find_avail_recursion"
+//Question6: Free list linking
+//Question7: Footer filler setting
+
+
 
 void *first_pp = NULL; // Page Pointer
 void *first_bp = NULL;
@@ -91,7 +107,9 @@ static void *find_avail_recursion(size_t size, void *start_ptr);
 
 static void *find_avail(size_t size);
 
-/* 
+static void *find_avail_best_fit(size_t size);
+
+/*
  * mm_init - initialize the malloc package.
  */
 int mm_init(void) {
@@ -144,13 +162,13 @@ int mm_init(void) {
     PUT(HDPR(NEXT_BLKP(bp)), PACK(0, 1));
 
     current_avail = bp;
-  //  printf("hi");
+    //  printf("hi");
 //    current_avail_size = 0;
 
     return 0;
 }
 
-/* 
+/*
  * mm_malloc - Allocate a block by using bytes from current_avail,
  *     grabbing a new page if necessary.
  */
@@ -165,6 +183,11 @@ void *mm_malloc(size_t size) {
         set_allocated(p, new_size);
         return p;
     }
+//    if((p = find_avail_best_fit(need_size)) != NULL){
+//        set_allocated(p, new_size);
+//        return p;
+//    }
+
     extend(new_size);
     set_allocated(p, new_size);
     return p;
@@ -223,7 +246,7 @@ void mm_free(void *ptr) {
             //un_map from temp ptr with length of available and 4 * alignment
             mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT)); //Question !!!!!!!!!!!!!!!!!!
 
-        //Case 2: If the page that is needed to free is the very top page
+            //Case 2: If the page that is needed to free is the very top page
         } else if (NEXT_PAGE(current_page_pointer) != NULL && PREV_PAGE(current_page_pointer) == NULL) {
 
             void *temp_ptr = current_page_pointer;
@@ -233,7 +256,7 @@ void mm_free(void *ptr) {
             first_bp = first_pp + (2 * OVERHEAD);
             PREV_PAGE(NEXT_PAGE(current_page_pointer)) = NULL;
             mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT));
-        //Case 3: If the page is at the most bottom
+            //Case 3: If the page is at the most bottom
         } else if (NEXT_PAGE(current_page_pointer) == NULL && PREV_PAGE(current_page_pointer) != NULL) {
 
             void *temp_ptr = current_page_pointer;
@@ -303,7 +326,7 @@ static void extend(size_t size) {
     current_avail_size = aligned_size - (4 * ALIGNMENT);
     bp += OVERHEAD;
     PUT(HDPR(bp), PACK(current_avail_size, 0));
-    PUT(FTRP(bp), current_avail_size);
+    PUT(FTRP(bp), PACK(current_avail_size, 0));
     PUT(HDPR(NEXT_BLKP(bp)), PACK(0, 1));
     current_avail = bp;
 }
@@ -318,14 +341,33 @@ static void *find_avail(size_t size) {
 //        }
 //
 //    }
-   return find_avail_recursion(size, free_list_ptr);
+    return find_avail_recursion(size, free_list_ptr);
 }
 
+//Simply first-fit algorithm
 static void *find_avail_recursion(size_t size, void *start_ptr) {
     if (!start_ptr) return NULL;
     if (GET_ALLOC(HDPR(free_list_ptr)) == 0 && size <= GET_SIZE(HDPR(start_ptr))) return start_ptr;
     return find_avail_recursion(size, NEXT_NODE(start_ptr));
 }
+
+
+static void *find_avail_best_fit(size_t size) {
+    void *p, *best_bp = NULL;
+    for (p = free_list_ptr; GET_ALLOC(HDPR(p)) == 0; p = NEXT_NODE(p)) {
+        if(p) {
+            if (size <= GET_SIZE(HDPR(p))) {
+                if (!best_bp || (GET_SIZE(HDPR(p)) < GET_SIZE(HDPR(best_bp)))) {
+                    best_bp = p;
+                    // return best_bp;
+                }
+            }
+        }
+        else break;
+    }
+    return (best_bp == NULL) ? NULL : best_bp;
+}
+
 
 static void set_allocated(void *bp, size_t size) {
     size_t full_size = GET_SIZE(HDPR(bp));
