@@ -13,7 +13,6 @@
 #include <assert.h>
 #include <unistd.h>
 #include <string.h>
-//#include <tclDecls.h>
 
 #include "mm.h"
 #include "memlib.h"
@@ -44,21 +43,22 @@ typedef struct list_node {
 typedef struct page_header {
     struct page_header *prev;
     struct page_header *next;
+    size_t page_size;
 } page_header;
 
 typedef size_t block_header; //Should be aligned to 16 bytes instead of keeping 8 bytes
-typedef size_t foot_header; //来个爸爸帮帮我!!!!
+typedef size_t foot_header;
 
 #define GET(p) (*(size_t *)(p))
 #define PUT(p, val) (*(size_t *)(p) = (val))
 #define PACK(size, alloc) ((size) | (alloc))
 #define OVERHEAD (sizeof(block_header) + sizeof(foot_header))
 #define HDPR(bp) ((char *)(bp) - (OVERHEAD / 2)) //Header pointer
-#define GET_SIZE(p) (GET(p) & ~0xF)
+#define GET_SIZE(p) (GET(p) & ~0x7)
 #define GET_ALLOC(p) (GET(p) & 0x1)
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(HDPR(bp)))//Next block pointer
-#define PREV_BLKP(bp) ((char*)(bp) - GET_SIZE((char*)(bp) - OVERHEAD)) // Previous block pointer
-#define FTRP(bp) ((char*)(bp) + GET_SIZE((char*)(bp) - OVERHEAD)) // Footer pointer
+#define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE((char*)(bp) - OVERHEAD)) // Previous block pointer
+#define FTRP(bp) ((char *)(bp)+GET_SIZE(HDPR(bp))-OVERHEAD)
 #define MAX(x, y) ((x) > (y)? (x) : (y))
 #define NEXT_PAGE(pp) ((page_header *)(pp))->next
 #define PREV_PAGE(pp) ((page_header *)(pp))->prev
@@ -66,6 +66,8 @@ typedef size_t foot_header; //来个爸爸帮帮我!!!!
 #define PREV_NODE(node) ((list_node *)(node))->prev
 #define SET_NEXT_PTR(node, qp) (NEXT_NODE(node) = qp)
 #define SET_PREV_PTR(node, qp) (PREV_NODE(node) = qp)
+#define GET_PAGE_SIZE(ps) ((page_header *)(ps))->page_size
+#define SET_PAGE_SIZE(ps, ns) (GET_PAGE_SIZE(ps) = ns)
 
 //#define GET_SIZE(p) (block_header *)(p)->size
 //#define GET_ALLOC(p) (block_header *)(p)->allocated
@@ -121,8 +123,9 @@ int mm_init(void) {
     //First page pointer and current page pointer is the same location with first payload pointer
     first_pp = current_page_pointer = first_bp;
 
-    //This is for page linking
     PUT(first_bp, 0);
+    SET_PAGE_SIZE(current_page_pointer, page_size);
+    SET_PAGE_SIZE(first_pp, page_size);
 
     //First page pointer has NULL previous page and NULL next page
     NEXT_PAGE(first_pp) = NULL;
@@ -132,26 +135,27 @@ int mm_init(void) {
     NEXT_PAGE(current_page_pointer) = NULL;
     PREV_PAGE(current_page_pointer) = NULL;
 
-    //Overhead equals 32
+    //Overhead equals 16
     first_bp += OVERHEAD;
 
     //Setting up prologue header
-    PUT(HDPR(first_bp), PACK(2, 1));
+    PUT(HDPR(first_bp), PACK(16, 1));
     //Setting up prologue footer
-    PUT(FTRP(first_bp), PACK(2, 1));
+    PUT(FTRP(first_bp), PACK(16, 1));
 
     //The first free list pointer
-    free_list_ptr = first_bp;
+    //free_list_ptr = first_bp;
 
     //Since we have an empty block at start, a prologue header and a prologue footer and a terminator,
     //Thus available size should be total size minus 4 * Alignment(16)
-    current_avail_size = page_size - (4 * ALIGNMENT);
+    current_avail_size = page_size - (2 * OVERHEAD);
 
     //Global variable, every page has the same available page size
     cons_avail_page_size = current_avail_size;
 
     //This is the payload pointer for allocation
     void *bp = first_bp + OVERHEAD;
+    free_list_ptr = bp;
 
     //Payload header has the size same with available size and allocated is 0
     PUT(HDPR(bp), PACK(current_avail_size, 0));
@@ -180,10 +184,11 @@ void *mm_malloc(size_t size) {
     int new_size = ALIGN(need_size + OVERHEAD);
     void *p;
     if ((p = find_avail(new_size)) != NULL) {
+
         set_allocated(p, new_size);
         return p;
     }
-//    if((p = find_avail_best_fit(need_size)) != NULL){
+//    if ((p = find_avail_best_fit(new_size)) != NULL) {
 //        set_allocated(p, new_size);
 //        return p;
 //    }
@@ -222,49 +227,57 @@ void mm_free(void *ptr) {
     //Merge if needed
     coalesce(ptr);
 
-    //Double Linked List of pages
-    //If the page is all freed, the current page should be removed which is using "mem_unmap"
-    if (GET_SIZE(HDPR(ptr)) == cons_avail_page_size) {
-        //Setting current page pointer
-        current_page_pointer = ptr - (2 * OVERHEAD);
+    if (GET_SIZE(PREV_BLKP(ptr)) == OVERHEAD) {
+        current_page_pointer = ptr - (2 * OVERHEAD); // HERE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-        //Case 1: If the page that is needed to free has both previous page and next page
-        if (NEXT_PAGE(current_page_pointer) != NULL && PREV_BLKP(current_page_pointer) != NULL) {
-
-            //current_page_pointer->next_page->prev_page = current_page_pointer->prev_page
-            PREV_PAGE(NEXT_PAGE(current_page_pointer)) = PREV_PAGE(current_page_pointer);
-
-            //current_page_pointer->prev_page->next_page = current_page_pointer->next_page
-            NEXT_PAGE(PREV_PAGE(current_page_pointer)) = NEXT_PAGE(current_page_pointer);
+        //Double Linked List of pages
+        //If the page is all freed, the current page should be removed which is using "mem_unmap"
+        if (GET_SIZE(HDPR(ptr)) == (GET_PAGE_SIZE(current_page_pointer) - (2 * OVERHEAD))) {
+            //Setting current page pointer
+            //  current_page_pointer = ptr - (2 * OVERHEAD);
 
             //Setting a temp pointer point to the same with the current_page_pointer
             void *temp_ptr = current_page_pointer;
 
-            //Current page pointer goes to next page
-            current_page_pointer = NEXT_PAGE(current_page_pointer);
+            size_t temp_size = GET_PAGE_SIZE(current_page_pointer);
 
-            //un_map from temp ptr with length of available and 4 * alignment
-            mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT)); //Question !!!!!!!!!!!!!!!!!!
+            //Case 1: If the page that is needed to free has both previous page and next page
+            if (NEXT_PAGE(current_page_pointer) != NULL && PREV_BLKP(current_page_pointer) != NULL) {
 
-            //Case 2: If the page that is needed to free is the very top page
-        } else if (NEXT_PAGE(current_page_pointer) != NULL && PREV_PAGE(current_page_pointer) == NULL) {
+                //current_page_pointer->next_page->prev_page = current_page_pointer->prev_page
+                PREV_PAGE(NEXT_PAGE(current_page_pointer)) = PREV_PAGE(current_page_pointer);
 
-            void *temp_ptr = current_page_pointer;
-            //Setting current page pointer and first page pointer to the next page
-            current_page_pointer = first_pp = NEXT_PAGE(current_page_pointer);
-            //Setting first payload pointer to the next page as well
-            first_bp = first_pp + (2 * OVERHEAD);
-            PREV_PAGE(NEXT_PAGE(current_page_pointer)) = NULL;
-            mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT));
-            //Case 3: If the page is at the most bottom
-        } else if (NEXT_PAGE(current_page_pointer) == NULL && PREV_PAGE(current_page_pointer) != NULL) {
+                //current_page_pointer->prev_page->next_page = current_page_pointer->next_page
+                NEXT_PAGE(PREV_PAGE(current_page_pointer)) = NEXT_PAGE(current_page_pointer);
 
-            void *temp_ptr = current_page_pointer;
 
-            //Setting current page pointer goes to previous page
-            current_page_pointer = PREV_PAGE(current_page_pointer);
-            NEXT_PAGE(PREV_PAGE(current_page_pointer)) = NULL;
-            mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT));
+                //Current page pointer goes to next page
+                current_page_pointer = NEXT_PAGE(current_page_pointer);
+
+                //un_map from temp ptr with length of available and 4 * alignment
+                //      mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT)); //Question !!!!!!!!!!!!!!!!!!
+
+                mem_unmap(temp_ptr, temp_size);
+
+                //Case 2: If the page that is needed to free is the very top page
+            } else if (NEXT_PAGE(current_page_pointer) != NULL && PREV_PAGE(current_page_pointer) == NULL) {
+
+                //Setting current page pointer and first page pointer to the next page
+                current_page_pointer = first_pp = NEXT_PAGE(current_page_pointer);
+                //Setting first payload pointer to the next page as well
+                first_bp = first_pp + (2 * OVERHEAD);
+                PREV_PAGE(NEXT_PAGE(current_page_pointer)) = NULL;
+                // mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT));
+                mem_unmap(temp_ptr, temp_size);
+                //Case 3: If the page is at the most bottom
+            } else if (NEXT_PAGE(current_page_pointer) == NULL && PREV_PAGE(current_page_pointer) != NULL) {
+
+                //Setting current page pointer goes to previous page
+                current_page_pointer = PREV_PAGE(current_page_pointer);
+                NEXT_PAGE(PREV_PAGE(current_page_pointer)) = NULL;
+                //  mem_unmap(temp_ptr, cons_avail_page_size + (4 * ALIGNMENT));
+                mem_unmap(temp_ptr, temp_size);
+            }
         }
     }
     return;
@@ -277,8 +290,7 @@ static void *coalesce(void *ptr) {
     size_t size = GET_SIZE(HDPR(ptr));
 
     /**Case 1**/
-    if (prev_alloc && next_alloc) add_to_free_list(ptr); //Add this ptr to free list
-
+    if (prev_alloc && next_alloc) {/*DO NOTHING*/}
         /**Case 2**/
     else if (prev_alloc && !next_alloc) {
         size += GET_SIZE(HDPR(NEXT_BLKP(ptr)));
@@ -314,33 +326,35 @@ static void extend(size_t size) {
 //    int newsize = ALIGN(need_size + OVERHEAD);
     int aligned_size = PAGE_ALIGN(size);
     void *bp = mem_map(aligned_size);
-
+    PUT(bp, 0);
     NEXT_PAGE(current_page_pointer) = bp;
     PREV_PAGE(bp) = current_page_pointer;
     NEXT_PAGE(bp) = NULL;
     current_page_pointer = bp;
+    SET_PAGE_SIZE(current_page_pointer, aligned_size);
 
     bp += OVERHEAD;
-    PUT(HDPR(bp), PACK(2, 1));
-    PUT(FTRP(bp), PACK(2, 0));
-    current_avail_size = aligned_size - (4 * ALIGNMENT);
+    PUT(HDPR(bp), PACK(16, 1));
+    PUT(FTRP(bp), PACK(16, 0));
+    current_avail_size = aligned_size - (2 * OVERHEAD);
     bp += OVERHEAD;
     PUT(HDPR(bp), PACK(current_avail_size, 0));
     PUT(FTRP(bp), PACK(current_avail_size, 0));
     PUT(HDPR(NEXT_BLKP(bp)), PACK(0, 1));
     current_avail = bp;
+    coalesce(current_avail);
 }
 
 static void *find_avail(size_t size) {
 //    void *bp;
-//    for(bp = free_list_ptr; GET_ALLOC(HDPR(bp)) == 0; bp = NEXT_NODE(bp))
-//    {
-//        if(size <= GET_SIZE(HDPR(bp)))
-//        {
+//    for (bp = free_list_ptr; GET_ALLOC(HDPR(bp)) == 0; bp = NEXT_NODE(bp)) {
+//
+//        if (size <= GET_SIZE(HDPR(bp))) {
 //            return bp;
 //        }
 //
 //    }
+//    return NULL;
     return find_avail_recursion(size, free_list_ptr);
 }
 
@@ -355,15 +369,14 @@ static void *find_avail_recursion(size_t size, void *start_ptr) {
 static void *find_avail_best_fit(size_t size) {
     void *p, *best_bp = NULL;
     for (p = free_list_ptr; GET_ALLOC(HDPR(p)) == 0; p = NEXT_NODE(p)) {
-        if(p) {
+        if (p) {
             if (size <= GET_SIZE(HDPR(p))) {
                 if (!best_bp || (GET_SIZE(HDPR(p)) < GET_SIZE(HDPR(best_bp)))) {
                     best_bp = p;
                     // return best_bp;
                 }
             }
-        }
-        else break;
+        } else break;
     }
     return (best_bp == NULL) ? NULL : best_bp;
 }
