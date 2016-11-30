@@ -83,9 +83,12 @@ int parse_three(const char *buf,
   len2 = s2 - (s1 + 1);
   len3 = len - len1 - len2 - 2;
 
-  *one_p = strndup(buf, len1);
-  *two_p = strndup(s1+1, len2);
-  *three_p = strndup(s2+1, len3);
+  if (one_p)
+    *one_p = strndup(buf, len1);
+  if (two_p)
+    *two_p = strndup(s1+1, len2);
+  if (three_p)
+    *three_p = strndup(s2+1, len3);
 
   return 1;
 }

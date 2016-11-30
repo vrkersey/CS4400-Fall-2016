@@ -63,7 +63,7 @@
                           [(1) user-2]
                           [else (format "u~a" j)]))
            (define content (format "[~a,~a]~a" i j (make-string CONTENT-LENGTH #\*)))
-           (hash-set! entries (format "~a: ~a" user content) 2)
+           (hash-set! entries (format "~a: ~a" user content) 2) ; 2 because of "import" below
            (call/input-url (struct-copy url say-url
                                         [query (list
                                                 (cons 'user user)
@@ -85,12 +85,12 @@
                          (for ([l (in-lines i 'return-linefeed)])
                            (define c (hash-ref entries l #f))
                            (unless c
-                             (error 'stress "unexpected result line for ~s: ~s" topic l))
+                             (raise-user-error 'stress "unexpected result line for ~s: ~s" topic l))
                            (cond
                             [(positive? c)
                              (hash-set! entries l 0)]
                             [else
-                             (error 'stress "extra copy of expected entry for ~s: ~s" topic l)]))))))
+                             (raise-user-error 'stress "extra copy of expected entry for ~s: ~s" topic l)]))))))
    
    (for ([topic (in-hash-keys topic-entries)])
      (void (call/input-url (struct-copy url (combine-url/relative root-url
@@ -113,14 +113,14 @@
                        (for ([l (in-lines i 'return-linefeed)])
                          (define c (hash-ref entries l #f))
                          (unless c
-                           (error 'stress "unexpected result line for ~s: ~s" topic l))
+                           (raise-user-error 'stress "unexpected result line for ~s: ~s" topic l))
                          (cond
                           [(positive? c)
                            (hash-set! entries l (sub1 c))]
                           [else
-                           (error 'stress "extra copy of expected entry for ~s: ~s" topic l)]))))
+                           (raise-user-error 'stress "extra copy of expected entry for ~s: ~s" topic l)]))))
 
      (for ([(k v) (in-hash entries)])
        (unless (zero? v)
-         (error 'stress "expected entry for ~s missing: ~s" topic k))))))
+         (raise-user-error 'stress "expected entry for ~s missing: ~s" topic k))))))
 
