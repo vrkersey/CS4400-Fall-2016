@@ -208,10 +208,61 @@ void doit(int fd) {
 
                     serve_form(fd, "", "", "", "");
                 } else if (starts_with("/import", uri)) {
-                    const char *topic = dictionary_get(query, "topic");
-                    const char *host = dictionary_get(query, "host");
-                    const char *port = dictionary_get(query, "port");
+                    //       const char *topic = dictionary_get(query, "topic");
+                    char *host = dictionary_get(query, "host");
+                    void *port = dictionary_get(query, "port");
+                    int port_num = *((int *) port);
                     //Pretend your server is a client and get contents from other server and append to your specific topic of conversation
+                    int clientfd;
+                    clientfd = Open_clientfd(host, port_num);
+
+                    exit_on_error(0);
+
+                    Signal(SIGPIPE, SIG_IGN);
+
+                    Rio_readinitb(&rio, clientfd);
+                    if (Rio_readlineb(&rio, buf, MAXLINE) <= 0)
+                        return;
+
+                    //     printf("!!!!!!!!!!!!!!!!!!!!!!+++++++++++++++++++++++++++++++++++++++!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n%s",
+                    //          buf);
+
+                    if (!parse_request_line(buf, &method, &uri, &version)) {
+                        clienterror(fd, method, "400", "Bad Request",
+                                    "TinyChat did not recognize the request");
+                    } else {
+                        if (strcasecmp(version, "HTTP/1.0")
+                            && strcasecmp(version, "HTTP/1.1")) {
+                            clienterror(fd, version, "501", "Not Implemented",
+                                        "TinyChat does not implement that version");
+                        } else if (strcasecmp(method, "GET")
+                                   && strcasecmp(method, "POST")) {
+                            clienterror(fd, method, "501", "Not Implemented",
+                                        "TinyChat does not implement that method");
+                        } else {
+                            headers = read_requesthdrs(&rio);
+                            query = make_dictionary(COMPARE_CASE_SENS, free);
+                            parse_uriquery(uri, query);
+
+
+                            const char *new_topic = dictionary_get(query, "topic");
+                            const char *content = dictionary_get(query, "content");
+                            const char *name = dictionary_get(query, "user");
+                            const char *all_cont = dictionary_get(global_dic, new_topic);
+
+                            const char *new_conv = append_strings(all_cont, "<br>", name, ": ", content, NULL);
+
+                            P(&sem_lock);
+                            dictionary_set(global_dic, new_topic, (void *) new_conv);
+                            V(&sem_lock);
+
+                            serve_form(fd, "", "", "", "");
+
+                        }
+
+                    }
+
+                    
 
                 } else {
                     serve_form(fd, "Welcome to TinyChat", "", "", "");//default
@@ -230,6 +281,7 @@ void doit(int fd) {
         free(version);
     }
 }
+
 
 /*
  * read_requesthdrs - read HTTP request headers
