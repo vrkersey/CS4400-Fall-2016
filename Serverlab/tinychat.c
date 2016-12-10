@@ -65,13 +65,15 @@ int main(int argc, char **argv) {
         if (connfd >= 0) {
             Getnameinfo((SA *) &clientaddr, clientlen, hostname, MAXLINE,
                         port, MAXLINE, 0);
-            printf("Accepted connection from (%s, %s)\n", hostname, port);
+            //  printf("Accepted connection from (%s, %s)\n", hostname, port);
             int *connfdp;
             pthread_t th;
             connfdp = malloc(sizeof(int));
             *connfdp = connfd;
             Pthread_create(&th, NULL, go_doit, connfdp);
             Pthread_detach(th);
+//            doit(connfd);
+            //          Close(connfd);
         }
     }
 }
@@ -123,8 +125,6 @@ void doit(int fd) {
 //                printf("*********************************** 1\n");
 //                print_stringdictionary(query);
 //                printf("*********************************** 1\n");
-
-                const char *entry = dictionary_get(query, "entry");
                 const char *name = dictionary_get(query, "name");
                 const char *topic = dictionary_get(query, "topic");
                 const char *new_header = append_strings("Tinychat - ", topic, NULL);
@@ -132,18 +132,24 @@ void doit(int fd) {
 
 
                 //entry reported and found
-                if (entry) {
+                if (dictionary_get(query, "user_name") && dictionary_get(query, "user_topic")) {
                     //No exist conversation, create a new one
-                    if (!dictionary_get(global_dic, topic)) {
+
+                    P(&sem_lock);
+                    const char *tem_topic = dictionary_get(global_dic, topic);
+                    V(&sem_lock);
+
+
+                    if (!tem_topic) {
                         const char *new_append = append_strings("", NULL);
                         P(&sem_lock);
                         dictionary_set(global_dic, topic, (void *) new_append);
                         V(&sem_lock);
                     } else {
                         P(&sem_lock);
-                        temp = dictionary_get(global_dic, topic);
+                        tem_topic = dictionary_get(global_dic, topic);
                         V(&sem_lock);
-                        serve_form(fd, new_header, name, topic, temp);
+                        serve_form(fd, new_header, name, topic, tem_topic);
                     }
 //                    printf("*********************************** 2\n");
 //                    print_stringdictionary(query);
@@ -164,7 +170,7 @@ void doit(int fd) {
                     if (!strlen(new_message)) {
                         serve_form(fd, new_header, name, topic, last_mes);
                     } else {
-                        const char *new_mes = append_strings(last_mes, "<br>", name, ": ", new_message, NULL);
+                        const char *new_mes = append_strings(last_mes, "<br>", "\r\n", name, ": ", new_message, NULL);
                         P(&sem_lock);
                         dictionary_set(global_dic, topic, (void *) new_mes);
                         V(&sem_lock);
@@ -186,6 +192,7 @@ void doit(int fd) {
                         P(&sem_lock);
                         dictionary_set(global_dic, topic, (void *) new_mes);
                         V(&sem_lock);
+                        serve_form(fd, "", "", topic, new_mes);
 
                     } else {
                         serve_form(fd, "", "", topic, last_mes);
@@ -193,76 +200,155 @@ void doit(int fd) {
                 } else if (starts_with("/say", uri)) {
 
                     const char *topic = dictionary_get(query, "topic");
-
-                    const char *name = dictionary_get(query, "user");
-
+                    const char *user = dictionary_get(query, "user");
                     const char *content = dictionary_get(query, "content");
+                    P(&sem_lock);
+                    const char *all_conv = dictionary_get(global_dic, topic);
+                    V(&sem_lock);
+                    const char *append_new;
+                    if (all_conv) {
+                        append_new = append_strings(all_conv, "\r\n", user, ": ", content, NULL);
+                    } else {
+                        append_new = append_strings(user, ": ", content, NULL);
+                    }
+                    P(&sem_lock);
+                    dictionary_set(global_dic, topic, (void *) append_new);
+                    V(&sem_lock);
+                    serve_form(fd, "", "", "", "");
 
-                    const char *all_cont = dictionary_get(global_dic, topic);
+                    //serve_form(fd, "", "", "", "");
+                } else if (starts_with("/import",
+                                       uri)) {   //Tried lots of ways to figure out, failed eventually. Hopefully I can get some partial credits, haha.
+                    const char *topic = dictionary_get(query, "topic");
 
-                    const char *new_conv = append_strings(all_cont, "<br>", name, ": ", content, NULL);
+
+                    char *host = dictionary_get(query, "host");
+                    printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!%s\n", host);
+
+                    char *port = dictionary_get(query, "port");
 
                     P(&sem_lock);
-                    dictionary_set(global_dic, topic, (void *) new_conv);
+                    const char *last_mes = dictionary_get(global_dic, topic);
                     V(&sem_lock);
 
-                    serve_form(fd, "", "", "", "");
-                } else if (starts_with("/import", uri)) {
-                    //       const char *topic = dictionary_get(query, "topic");
-                    char *host = dictionary_get(query, "host");
-                    void *port = dictionary_get(query, "port");
-                    int port_num = *((int *) port);
+//                            if (!last_mes) {
+//                                char *new_mes = append_strings("", NULL);
+//                                P(&sem_lock);
+//                                dictionary_set(global_dic, topic, (void *) new_mes);
+//                                V(&sem_lock);
+//                                serve_form(fd, "", "", topic, new_mes);
+//
+//                            } else {
+                    char *new_str = append_strings(last_mes, "\r\n", last_mes, NULL);
+                    P(&sem_lock);
+                    dictionary_set(global_dic, topic, (void *) new_str);
+                    V(&sem_lock);
+                    serve_form(fd, "", "", topic, new_str);
+
+
+
+
+                    // int port_num = *((int *) port);
+
+                    dictionary_t *new_header, *new_query;
+
+                    printf("!!!!!!!!!!!!!!!!!!!!!!!port is %s\n", port);
                     //Pretend your server is a client and get contents from other server and append to your specific topic of conversation
                     int clientfd;
-                    clientfd = Open_clientfd(host, port_num);
+                    rio_t new_rio;
+                    char buffer[MAXLINE], *new_uri, *new_method, *new_version;
+                    clientfd = Open_clientfd(host, port);
+
+                    printf("!!!!!!!!!!!!!!!!!!!!!!!cliend is %d\n", clientfd);
 
                     exit_on_error(0);
 
                     Signal(SIGPIPE, SIG_IGN);
+                    char *request = append_strings("GET /conversation?topic=", topic, " ", "HTTP/1.1", "\r\n", NULL);
+                    sprintf(buffer, request);
+                    Rio_writen(clientfd, buffer, strlen(buffer));
+                    // free(buffer1);
 
-                    Rio_readinitb(&rio, clientfd);
-                    if (Rio_readlineb(&rio, buf, MAXLINE) <= 0)
+                    Rio_readinitb(&new_rio, clientfd);
+                    if (Rio_readlineb(&new_rio, buffer, MAXLINE) <= 0)
                         return;
+                    printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!this is buf %s\n", buffer);
+
+                    //      Rio_writen(clientfd, )
 
                     //     printf("!!!!!!!!!!!!!!!!!!!!!!+++++++++++++++++++++++++++++++++++++++!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n%s",
                     //          buf);
 
-                    if (!parse_request_line(buf, &method, &uri, &version)) {
-                        clienterror(fd, method, "400", "Bad Request",
+                    if (!parse_request_line(buffer, &new_method, &new_uri, &new_version)) {
+                        clienterror(clientfd, new_method, "400", "Bad Request",
                                     "TinyChat did not recognize the request");
                     } else {
-                        if (strcasecmp(version, "HTTP/1.0")
-                            && strcasecmp(version, "HTTP/1.1")) {
-                            clienterror(fd, version, "501", "Not Implemented",
+                        if (strcasecmp(new_version, "HTTP/1.0")
+                            && strcasecmp(new_version, "HTTP/1.1")) {
+                            clienterror(clientfd, new_version, "501", "Not Implemented",
                                         "TinyChat does not implement that version");
-                        } else if (strcasecmp(method, "GET")
-                                   && strcasecmp(method, "POST")) {
-                            clienterror(fd, method, "501", "Not Implemented",
+                        } else if (strcasecmp(new_method, "GET")
+                                   && strcasecmp(new_method, "POST")) {
+                            clienterror(clientfd, new_method, "501", "Not Implemented",
                                         "TinyChat does not implement that method");
                         } else {
-                            headers = read_requesthdrs(&rio);
-                            query = make_dictionary(COMPARE_CASE_SENS, free);
-                            parse_uriquery(uri, query);
+                            new_header = read_requesthdrs(&new_rio);
+                            new_query = make_dictionary(COMPARE_CASE_SENS, free);
+                            parse_uriquery(new_uri, new_query);
 
+                            printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
 
-                            const char *new_topic = dictionary_get(query, "topic");
-                            const char *content = dictionary_get(query, "content");
-                            const char *name = dictionary_get(query, "user");
-                            const char *all_cont = dictionary_get(global_dic, new_topic);
+                            print_stringdictionary(new_query);
 
-                            const char *new_conv = append_strings(all_cont, "<br>", name, ": ", content, NULL);
+//                            const char *new_topic = dictionary_get(query, "topic");
+//                            const char *content = dictionary_get(query, "content");
+//                            const char *name = dictionary_get(query, "user");
 
+                            const char *topic = dictionary_get(new_query, "topic");
                             P(&sem_lock);
-                            dictionary_set(global_dic, new_topic, (void *) new_conv);
+                            const char *last_mes = dictionary_get(global_dic, topic);
                             V(&sem_lock);
 
-                            serve_form(fd, "", "", "", "");
+//                            if (!last_mes) {
+//                                char *new_mes = append_strings("", NULL);
+//                                P(&sem_lock);
+//                                dictionary_set(global_dic, topic, (void *) new_mes);
+//                                V(&sem_lock);
+//                                serve_form(fd, "", "", topic, new_mes);
+//
+//                            } else {
+                            char *new_str = append_strings(last_mes, "\r\n", last_mes, NULL);
+                            P(&sem_lock);
+                            dictionary_set(global_dic, topic, (void *) new_str);
+                            V(&sem_lock);
+                            serve_form(fd, "", "", topic, new_str);
+                            //           }
+
+
+
+//                            if (content) {
+//                                P(&sem_lock);
+//                                const char *all_cont = dictionary_get(global_dic, new_topic);
+//                                V(&sem_lock);
+//
+//                                const char *new_conv = append_strings(all_cont, "\r\n", name, ": ", content, NULL);
+//
+//                                P(&sem_lock);
+//                                dictionary_set(global_dic, new_topic, (void *) new_conv);
+//                                V(&sem_lock);
+//
+//                                serve_form(fd, "", "", "", "");
+//                            } else {
+//                                char *new_mes = append_strings("", NULL);
+//                                P(&sem_lock);
+//                                dictionary_set(global_dic, new_topic, (void *) new_mes);
+//                                V(&sem_lock);
+//                                serve_form(fd, "", "", "", "");
+//                            }
 
                         }
 
                     }
-
-                    
 
                 } else {
                     serve_form(fd, "Welcome to TinyChat", "", "", "");//default
@@ -342,8 +428,14 @@ static char *ok_header(size_t len, const char *content_type) {
 void serve_form(int fd, const char *pre_content, const char *name, const char *topic, const char *conversation) {
     size_t len;
     char *body, *header;
-    if (!strlen(pre_content)) body = append_strings(conversation, "<br>", NULL);
-    else if (strcmp(pre_content, "Welcome to TinyChat") == 0) {
+    if (!strlen(pre_content)) {
+        body = append_strings(conversation, "\r\n", NULL);
+        len = strlen(body);
+
+        /* Send response headers to client */
+        header = ok_header(len, "text/html; charset=utf-8");
+
+    } else if (strcmp(pre_content, "Welcome to TinyChat") == 0) {
         body = append_strings("<html><body>\r\n",
                               "<p>Welcome to TinyChat</p>",
                               "\r\n<form action=\"reply\" method=\"post\"",
@@ -351,10 +443,15 @@ void serve_form(int fd, const char *pre_content, const char *name, const char *t
                               " accept-charset=\"UTF-8\">\r\n",
                               "Name: <input type=\"text\" name=\"name\"><br>\r\n",
                               "Topic: <input type=\"text\" name=\"topic\"><br>\r\n",
-                              "<input type=\"hidden\" name=\"entry\" value=\"yes\">\r\n",
+                              "<input type=\"hidden\" name=\"user_name\" value=\"yes\">\r\n",
+                              "<input type=\"hidden\" name=\"user_topic\" value=\"yes\">\r\n",
                               "<input type=\"submit\" value=\"Join Conversation\">\r\n",
                               "</form></body></html>\r\n",
                               NULL);
+        len = strlen(body);
+
+        /* Send response headers to client */
+        header = ok_header(len, "text/html; charset=utf-8");
 
     } else {
         body = append_strings("<html><body>\r\n",
@@ -369,12 +466,13 @@ void serve_form(int fd, const char *pre_content, const char *name, const char *t
                               "<input type=\"submit\" value=\"Add\">\r\n",
                               "</form></body></html>\r\n",
                               NULL);
+        len = strlen(body);
+
+        /* Send response headers to client */
+        header = ok_header(len, "text/html; charset=utf-8");
     }
 
-    len = strlen(body);
 
-    /* Send response headers to client */
-    header = ok_header(len, "text/html; charset=utf-8");
     Rio_writen(fd, header, strlen(header));
     printf("Response headers:\n");
     printf("%s", header);
@@ -422,7 +520,7 @@ static void print_stringdictionary(dictionary_t *d) {
 
     count = dictionary_count(d);
     for (i = 0; i < count; i++) {
-        printf("%s ========================================== %s\n",
+        printf("%s ======================================================================================================================== %s\n",
                dictionary_key(d, i),
                (const char *) dictionary_value(d, i));
     }
@@ -676,4 +774,3 @@ static void print_stringdictionary(dictionary_t *d) {
 //    }
 //    printf("\n");
 //}
-
